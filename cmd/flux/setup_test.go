@@ -65,3 +65,47 @@ func TestCopyPluginSystemLayout(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallPluginAtomic installs over an existing plugin and checks that
+// the swap leaves a complete tree with no staging directory behind. A
+// half-written plugin directory makes omarchy-shell reload against missing
+// QML files, which crashes quickshell, so the install must never expose
+// one.
+func TestInstallPluginAtomic(t *testing.T) {
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "flux")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A stale file that the new tree must remove, proving dest was replaced
+	// rather than merged into.
+	if err := os.WriteFile(filepath.Join(dest, "stale.qml"), []byte("// stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := installPlugin("../../gui/omarchy", "../../gui/qml", dest); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"manifest.json", "Panel.qml", "BarWidget.qml", "Service.qml", "Backend.qml", "Flux/qmldir", "Flux/FluxView.qml", "Flux/pages/qmldir", "Flux/components/qmldir"} {
+		if _, err := os.Stat(filepath.Join(dest, want)); err != nil {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dest, "stale.qml")); !os.IsNotExist(err) {
+		t.Errorf("stale.qml survived the install")
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".flux-install-") {
+			t.Errorf("staging directory %s left behind", e.Name())
+		}
+	}
+	// The real validator, when this machine has Omarchy.
+	if _, err := exec.LookPath("omarchy"); err == nil {
+		if out, err := exec.Command("omarchy", "plugin", "validate", dest).CombinedOutput(); err != nil {
+			t.Fatalf("omarchy plugin validate: %v\n%s", err, out)
+		}
+	}
+}

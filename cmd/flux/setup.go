@@ -152,10 +152,7 @@ func setupPlugin(dry bool, run func(string, string, ...string) error) error {
 	if dry {
 		fmt.Println("  would copy:", src, "to", dest)
 	} else {
-		if err := os.RemoveAll(dest); err != nil {
-			return err
-		}
-		if err := copyPlugin(src, views, dest); err != nil {
+		if err := installPlugin(src, views, dest); err != nil {
 			return err
 		}
 		fmt.Println("  ✓ copied the plugin to", dest)
@@ -168,6 +165,38 @@ func setupPlugin(dry bool, run func(string, string, ...string) error) error {
 	}
 	if !dry {
 		fmt.Println("  ✓ the plugin is enabled, with the bar item on the right")
+	}
+	return nil
+}
+
+// installPlugin replaces the plugin at dest without ever leaving a
+// half-written tree behind. omarchy-shell watches the plugin directory and
+// reloads every plugin on each change, so copying file by file into the
+// live directory fires dozens of reloads over an incomplete plugin. A
+// reload that lands mid-copy resolves QML against missing files, and the
+// resulting warnings during teardown crash quickshell. Building the new
+// tree in a sibling temporary directory and renaming it over dest instead
+// leaves the watcher one complete tree to load.
+func installPlugin(src, views, dest string) error {
+	parent := filepath.Dir(dest)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(parent, ".flux-install-*")
+	if err != nil {
+		return err
+	}
+	if err := copyPlugin(src, views, tmp); err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	if err := os.RemoveAll(dest); err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.RemoveAll(tmp)
+		return err
 	}
 	return nil
 }
